@@ -195,4 +195,5 @@ def ingested_months(conn) -> list[str]:
     tables = {name for (name,) in conn.execute("SHOW TABLES").fetchall()}
     if "raw_trips" not in tables:
         return []
-    return [row[0] for row in conn.execute("SELECT DISTINCT month FROM raw_trips ORDER BY 1")]
+    rows = conn.execute("SELECT DISTINCT month FROM raw_trips ORDER BY 1").fetchall()
+    return [row[0] for row in rows]

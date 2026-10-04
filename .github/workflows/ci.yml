@@ -4,14 +4,25 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      month:
+        description: "Month to run the pipeline for (YYYY-MM)"
+        required: false
+        default: "2024-01"
+  schedule:
+    # Weekly, Mondays at 04:17 UTC.
+    - cron: "17 4 * * 1"
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
   lint-and-test:
     name: ruff + pytest
+    # Push/PR checks only; the scheduled and manual runs exist for the pipeline job.
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,3 +45,44 @@ jobs:
 
       - name: Unit tests
         run: pytest -q
+
+  pipeline:
+    name: run-all pipeline
+    # Manual dispatch and the weekly schedule only - it downloads ~50MB from TLC.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      MONTH: ${{ inputs.month || '2024-01' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Cache raw TLC Parquet
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: tlc-raw-${{ env.MONTH }}-v1
+          restore-keys: |
+            tlc-raw-${{ env.MONTH }}-
+
+      - name: Run the pipeline
+        run: taxi-pipeline run-all "$MONTH"
+
+      - name: Show report head
+        run: head -40 reports/report.md
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-${{ env.MONTH }}
+          path: reports/
+          if-no-files-found: error

@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build report and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Cache raw TLC Parquet
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: tlc-raw-2024Q1-v1
+          restore-keys: |
+            tlc-raw-2024-01-
+
+      - name: Run the pipeline for 2024-01..2024-03
+        run: taxi-pipeline run-all 2024-01 2024-02 2024-03
+
+      - name: Collect release assets
+        run: |
+          mkdir -p release-assets
+          cp reports/report.md release-assets/
+          cp reports/charts/*.png release-assets/
+          cp reports/exports/*.parquet release-assets/
+          ls -la release-assets
+
+      - name: Build the release notes
+        run: |
+          {
+            echo "# ${{ github.ref_name }}"
+            echo
+            echo "Pipeline run over NYC TLC yellow taxi data for 2024-01, 2024-02 and 2024-03."
+            echo
+            echo "Attached: \`report.md\`, the three chart PNGs, and the aggregate tables"
+            echo "(\`daily_trips\`, \`hourly_fare_tip\`, \`top_zones\`) exported as Parquet."
+            echo
+            # The report's chart links are relative, so lift just the tables into the notes.
+            sed -n '/## Month-by-month comparison/,/## Data-quality checks/p' reports/report.md \
+              | sed '$d'
+            sed -n '/## Data-quality checks/,/## Aggregate exports/p' reports/report.md \
+              | sed '$d'
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: release-notes.md
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/report.md
+            release-assets/trips_per_day.png
+            release-assets/hourly_fare_tip.png
+            release-assets/top_zones.png
+            release-assets/daily_trips.parquet
+            release-assets/hourly_fare_tip.parquet
+            release-assets/top_zones.parquet
